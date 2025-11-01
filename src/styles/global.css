@@ -1,0 +1,243 @@
+:root {
+    /* Spa-inspired palette: soft mint, warm beige and calm coral accent */
+    --spa-bg: #f6fbf8;
+    /* very light mint */
+    --spa-mint: #cfefe0;
+    /* primary mint */
+    --spa-beige: #fff8f0;
+    /* warm background */
+    --spa-accent: #7fbf9e;
+    /* deeper mint for accents */
+    --spa-text: #254a3a;
+    /* dark green for text */
+    --spa-muted: #6b7a73;
+}
+
+body {
+    font-family: 'Poppins', sans-serif;
+    background: var(--spa-bg);
+    color: var(--spa-text);
+}
+
+.app {
+    min-height: 100vh;
+}
+
+.sidebar {
+    width: 240px;
+    min-height: 100vh;
+    position: fixed;
+    background: linear-gradient(180deg, #ffffffcc, var(--spa-beige));
+    border-right: 1px solid #e9efe9;
+    z-index: 950;
+}
+
+.content {
+    margin-left: 240px;
+}
+
+.sidebar .nav-link {
+    color: var(--spa-text);
+}
+
+.sidebar .nav-link.active {
+    background: var(--spa-mint);
+    border-radius: 8px;
+    color: var(--spa-text);
+}
+
+.topbar {
+    position: sticky;
+    top: 0;
+    z-index: 1000;
+    /* keep header below modal/backdrop */
+    background: #ffffff;
+    /* fully opaque to avoid see-through artifacts */
+}
+
+.card-spa {
+    border-radius: 12px;
+}
+
+.service-card {
+    border-radius: 12px;
+    background: linear-gradient(180deg, #fff, #f8fffb);
+}
+
+/* Modal stacking and size tweaks for our custom modal implementation */
+.modal-backdrop.show {
+    position: fixed;
+    inset: 0;
+    /* top:0; right:0; bottom:0; left:0 */
+    display: block;
+    background: rgba(0, 0, 0, 0.6);
+    opacity: 1;
+    /* above header */
+    z-index: 1190;
+}
+
+.modal.d-block {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1200;
+    /* modal content above backdrop */
+}
+
+/* make dialog wider for comfortable form layout */
+.modal-dialog.modal-lg-custom {
+    max-width: 1100px;
+    margin: 1.75rem auto;
+}
+
+.modal-content {
+    border-radius: 12px;
+    box-shadow: 0 8px 20px rgba(27, 45, 38, 0.08);
+    background: #ffffff;
+    /* ensure opaque white modal body */
+    overflow: hidden;
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.modal-header {
+    background: linear-gradient(90deg, rgba(127, 191, 158, 0.08), rgba(207, 239, 224, 0.04));
+}
+
+.modal-body {
+    padding: 1rem 1.25rem;
+    overflow: auto;
+}
+
+.modal-dialog {
+    position: relative;
+    z-index: 1210;
+    /* sit above the modal container but below modal-content's stacking */
+}
+
+.btn-primary {
+    background-color: var(--spa-accent);
+    border-color: var(--spa-accent);
+}
+
+.btn-primary:hover {
+    background-color: #6da786;
+    border-color: #6da786;
+}
+
+.logo-img {
+    height: 56px;
+}
+
+.sidebar-header img.logo-img {
+    display: block;
+    margin: 0 auto 8px auto;
+}
+
+/* When modal is opened, add this class to body to blur the main app content for better effect */
+body.modal-open-blur .content,
+body.modal-open-blur .sidebar {
+    filter: blur(4px) brightness(0.95);
+    pointer-events: none;
+    /* prevent interaction with background */
+    user-select: none;
+}
+
+/* but keep topbar visually behind the backdrop; it should not be blurred twice */
+body.modal-open-blur .topbar {
+    filter: none;
+}
+
+/* Responsive: make modal full-screen and form stack on small devices */
+@media (max-width: 767px) {
+    .modal-dialog.modal-lg-custom {
+        max-width: 95%;
+        margin: 0.5rem auto;
+    }
+
+    .modal-content {
+        height: auto;
+        max-height: 95vh;
+    }
+
+    .modal-body .row>[class*='col-'] {
+        flex: 0 0 100%;
+        max-width: 100%;
+    }
+
+    .sidebar {
+        width: 64px;
+        /* minimal sidebar on mobile */
+    }
+
+    .content {
+        margin-left: 64px;
+    }
+
+    table.table {
+        font-size: 13px;
+    }
+}
+
+/* Off-canvas sidebar and overlay for small screens */
+
+.sidebar {
+    transition: transform 0.25s ease, width 0.2s ease;
+}
+
+.sidebar.closed {
+    transform: translateX(-100%);
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 100vh;
+    z-index: 1150;
+}
+
+.sidebar.open {
+    transform: translateX(0);
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 100vh;
+    z-index: 1150;
+    background: white;
+}
+
+.sidebar-overlay {
+    display: none;
+}
+
+@media (max-width: 767px) {
+    .sidebar-overlay.show {
+        display: block;
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.45);
+        z-index: 1140;
+    }
+
+    /* adjust sidebar width on mobile */
+    .sidebar {
+        width: 220px;
+    }
+
+    .content {
+        margin-left: 0;
+    }
+
+    .topbar .btn {
+        padding: 0.5rem 0.65rem;
+        font-size: 18px;
+    }
+
+    .btn-mobile-full {
+        width: 100%;
+    }
+}
