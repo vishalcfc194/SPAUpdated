@@ -55,15 +55,9 @@ const billSlice = createSlice({
       })
       .addCase(deleteBill.fulfilled, (state, action) => {
         state.items = state.items.filter(
-          (b) => (b._id || b.id) !== action.payload.id
+          (b) => b._id !== action.payload.id && b.id !== action.payload.id
         );
         toast.success("Bill deleted");
-      })
-      .addCase(deleteBill.rejected, (state, action) => {
-        toast.error(action.error.message || "Failed to delete bill");
-      })
-      .addCase(updateBill.rejected, (state, action) => {
-        toast.error(action.error.message || "Failed to update bill");
       })
       .addCase(createBill.rejected, (state, action) => {
         toast.error(action.error.message || "Failed to create bill");

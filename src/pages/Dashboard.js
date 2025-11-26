@@ -1,36 +1,82 @@
-import React, { useEffect, useState } from "react";
-import { load } from "../utils/storage";
+import React, { useEffect } from "react";
+import { useDispatch, useSelector } from "react-redux";
+import { fetchSummary, fetchDaily } from "../features/dashboard/dashboardSlice";
 
-const currency = (n) => `₹${n}`;
+const currency = (n) => {
+  const value = Math.round(Number(n || 0));
+  return `₹${value}.00`;
+};
+
+const formatDateDisplay = (ymd) => {
+  if (!ymd) return "";
+  try {
+    const d = new Date(ymd);
+    return d.toLocaleDateString("en-GB", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    });
+  } catch (e) {
+    return ymd;
+  }
+};
+
+const formatDayMonth = (dateInput) => {
+  if (!dateInput) return "";
+  try {
+    const d = new Date(dateInput);
+    return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  } catch (e) {
+    return dateInput;
+  }
+};
+
+const formatWeekday = (ymd) => {
+  if (!ymd) return "";
+  try {
+    const d = new Date(ymd);
+    // full weekday name, e.g. 'Saturday'
+    return d.toLocaleDateString("en-GB", { weekday: "long" });
+  } catch (e) {
+    return "";
+  }
+};
+
+const formatTodayLabel = () => {
+  return formatDateDisplay(new Date());
+};
+
+const formatWeekRangeLabel = () => {
+  const today = new Date();
+  const end = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const start = new Date(end);
+  start.setDate(end.getDate() - 6);
+  if (start.getFullYear() === end.getFullYear()) {
+    return `${formatDayMonth(start)} - ${formatDateDisplay(end)}`;
+  }
+  return `${formatDateDisplay(start)} - ${formatDateDisplay(end)}`;
+};
+
+const formatMonthLabel = () => {
+  const d = new Date();
+  return d.toLocaleDateString("en-GB", { month: "long", year: "numeric" });
+};
+
+const formatYearLabel = () => {
+  return new Date().getFullYear().toString();
+};
 
 const Dashboard = () => {
-  const [bills, setBills] = useState([]);
+  const dispatch = useDispatch();
+  const summary = useSelector(
+    (state) => state.dashboard.summary || { day: 0, week: 0, month: 0, year: 0 }
+  );
+  const daily = useSelector((state) => state.dashboard.daily || []);
 
   useEffect(() => {
-    const data = load("bills", []);
-    setBills(data);
-  }, []);
-
-  const totals = bills.reduce(
-    (acc, b) => {
-      const amt = Number(b.total || b.amount || 0);
-      const d = new Date(b.date);
-      const today = new Date();
-      const diffDays = Math.floor((today - d) / (1000 * 60 * 60 * 24));
-      acc.year += amt;
-      acc.month += amt; // simple approximation
-      if (diffDays < 7) acc.week += amt;
-      if (diffDays === 0) acc.day += amt;
-      return acc;
-    },
-    { day: 0, week: 0, month: 0, year: 0 }
-  );
-
-  const dayWise = bills.reduce((map, b) => {
-    const key = b.date || "Unknown";
-    map[key] = (map[key] || 0) + Number(b.total || b.amount || 0);
-    return map;
-  }, {});
+    dispatch(fetchSummary());
+    dispatch(fetchDaily(30));
+  }, [dispatch]);
 
   return (
     <div>
@@ -41,7 +87,10 @@ const Dashboard = () => {
             <div className="d-flex justify-content-between align-items-center">
               <div>
                 <h6 className="mb-1">Daily Income</h6>
-                <h4 className="m-0">{currency(totals.day)}</h4>
+                <small className="text-muted d-block">
+                  {formatTodayLabel()}
+                </small>
+                <h4 className="m-0">{currency(summary.day || 0)}</h4>
               </div>
               <div className="fs-3 text-success">📈</div>
             </div>
@@ -52,7 +101,10 @@ const Dashboard = () => {
             <div className="d-flex justify-content-between align-items-center">
               <div>
                 <h6 className="mb-1">Weekly Income</h6>
-                <h4 className="m-0">{currency(totals.week)}</h4>
+                <small className="text-muted d-block">
+                  {formatWeekRangeLabel()}
+                </small>
+                <h4 className="m-0">{currency(summary.week || 0)}</h4>
               </div>
               <div className="fs-3 text-success">🗓️</div>
             </div>
@@ -63,7 +115,10 @@ const Dashboard = () => {
             <div className="d-flex justify-content-between align-items-center">
               <div>
                 <h6 className="mb-1">Monthly Income</h6>
-                <h4 className="m-0">{currency(totals.month)}</h4>
+                <small className="text-muted d-block">
+                  {formatMonthLabel()}
+                </small>
+                <h4 className="m-0">{currency(summary.month || 0)}</h4>
               </div>
               <div className="fs-3 text-success">📅</div>
             </div>
@@ -74,7 +129,10 @@ const Dashboard = () => {
             <div className="d-flex justify-content-between align-items-center">
               <div>
                 <h6 className="mb-1">Yearly Income</h6>
-                <h4 className="m-0">{currency(totals.year)}</h4>
+                <small className="text-muted d-block">
+                  {formatYearLabel()}
+                </small>
+                <h4 className="m-0">{currency(summary.year || 0)}</h4>
               </div>
               <div className="fs-3 text-success">💰</div>
             </div>
@@ -90,20 +148,30 @@ const Dashboard = () => {
               <tr>
                 <th>Date</th>
                 <th>Income</th>
+                <th>Day</th>
               </tr>
             </thead>
             <tbody>
-              {Object.keys(dayWise).length === 0 && (
+              <tr className="table-info">
+                <td>{formatTodayLabel()}</td>
+                <td>{currency(summary.day || 0)}</td>
+                <td>{formatWeekday(new Date())}</td>
+              </tr>
+              {(!daily || daily.length === 0) && (
                 <tr>
-                  <td colSpan={2}>No data</td>
+                  <td colSpan={3}>No data</td>
                 </tr>
               )}
-              {Object.entries(dayWise).map(([d, amt]) => (
-                <tr key={d}>
-                  <td>{d}</td>
-                  <td>{currency(amt)}</td>
-                </tr>
-              ))}
+              {daily
+                .slice()
+                .reverse()
+                .map((row) => (
+                  <tr key={row.date}>
+                    <td>{formatDateDisplay(row.date)}</td>
+                    <td>{currency(row.income)}</td>
+                    <td>{formatWeekday(row.date)}</td>
+                  </tr>
+                ))}
             </tbody>
           </table>
         </div>

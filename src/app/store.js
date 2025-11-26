@@ -5,6 +5,8 @@ import staffReducer from "../features/staff/staffSlice";
 import clientsReducer from "../features/clients/clientSlice";
 import membershipsReducer from "../features/memberships/membershipSlice";
 import billsReducer from "../features/bills/billSlice";
+import dashboardReducer from "../features/dashboard/dashboardSlice";
+import clientMembershipServicesReducer from "../features/clientMembershipServices/clientMembershipServiceSlice";
 
 export const store = configureStore({
   reducer: {
@@ -14,6 +16,8 @@ export const store = configureStore({
     clients: clientsReducer,
     memberships: membershipsReducer,
     bills: billsReducer,
+    dashboard: dashboardReducer,
+    clientMembershipServices: clientMembershipServicesReducer,
   },
 });
 

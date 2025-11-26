@@ -65,7 +65,6 @@ const Staff = () => {
                 <th>Role</th>
                 <th>Contact</th>
                 <th>Status</th>
-                <th>Actions</th>
               </tr>
             </thead>
             <tbody>

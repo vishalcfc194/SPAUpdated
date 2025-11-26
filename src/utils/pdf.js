@@ -23,43 +23,26 @@ export const generatePDFBill = async (bill, options = { action: "open" }) => {
       bill.clientPhone || bill.clientPhoneRaw || bill.clientPhone || bill.phone;
     const clientAddress = bill.clientAddress || bill.address || "";
     const staffName =
-      bill.staffName || (bill.staff && (bill.staff.name || bill.staff)) || bill.staff || "";
+      (bill.staff && (bill.staff.name || bill.staff)) || bill.staff || "";
     const dateStr = formatDateReadable(
       bill.dateFrom || bill.date || bill.createdAt || ""
     );
 
     // build items rows from bill.items
     const items = (bill.items || []).map((it) => {
-      let name = "";
-      let description = "";
-      
-      if (it.service) {
-        name = it.service.title || it.service.name || it.service;
-        description = it.service.description || "";
-      } else if (it.membership) {
-        name = it.membership.name || it.membership;
-        if (it.membership.benefits && Array.isArray(it.membership.benefits)) {
-          description = it.membership.benefits.join(", ");
-        }
-      } else {
-        name = it.membershipName || it.serviceName || "Item";
-        description = "";
-      }
-      
+      const name = it.service
+        ? it.service.title || it.service.name || it.service
+        : it.membership
+        ? it.membership.name || it.membership
+        : it.membershipName || it.serviceName || "Item";
       const qty = it.quantity || 1;
-      const price = Number(it.price || it.amount || 0);
+      const price = it.price || it.amount || 0;
       const amount = qty * price;
-      
-      // Combine name and description for display
-      const displayName = description ? `${name} - ${description}` : name;
-      
-      return { name: displayName, qty, price, amount };
+      return { name, qty, price, amount };
     });
 
-    const subtotal = Number(
-      bill.subtotal || items.reduce((s, i) => s + (i.amount || 0), 0) || Number(bill.total || 0)
-    );
-    const discountAmount = Number(bill.discountAmount || 0);
+    const subtotal =
+      items.reduce((s, i) => s + (i.amount || 0), 0) || Number(bill.total || 0);
 
     // Richer HTML for full A4 page
     const invoiceHtml = `
@@ -115,8 +98,8 @@ export const generatePDFBill = async (bill, options = { action: "open" }) => {
               <tr>
                 <td style="padding:10px 8px; border-bottom:1px solid #f0f0f0">${i.name}</td>
                 <td style="text-align:center; padding:10px 8px; border-bottom:1px solid #f0f0f0">${i.qty}</td>
-                <td style="text-align:right; padding:10px 8px; border-bottom:1px solid #f0f0f0">₹${i.price.toFixed(2)}</td>
-                <td style="text-align:right; padding:10px 8px; border-bottom:1px solid #f0f0f0">₹${i.amount.toFixed(2)}</td>
+                <td style="text-align:right; padding:10px 8px; border-bottom:1px solid #f0f0f0">₹${i.price}</td>
+                <td style="text-align:right; padding:10px 8px; border-bottom:1px solid #f0f0f0">₹${i.amount}</td>
               </tr>
             `
               )
@@ -126,10 +109,12 @@ export const generatePDFBill = async (bill, options = { action: "open" }) => {
 
         <div style="display:flex; justify-content:flex-end; margin-top:18px;">
           <div style="width:320px;">
-            <div style="display:flex; justify-content:space-between; padding:6px 0; font-size:13px;"><div>Subtotal</div><div>₹${subtotal.toFixed(2)}</div></div>
-            ${discountAmount > 0 ? `<div style="display:flex; justify-content:space-between; padding:6px 0; font-size:13px;"><div>Discount${bill.discountPercent ? ` (${bill.discountPercent}%)` : ''}</div><div>₹${discountAmount.toFixed(2)}</div></div>` : ''}
+            <div style="display:flex; justify-content:space-between; padding:6px 0; font-size:13px;"><div>Subtotal</div><div>₹${subtotal}</div></div>
+            <div style="display:flex; justify-content:space-between; padding:6px 0; font-size:13px;"><div>Discount</div><div>₹${
+              bill.discount || 0
+            }</div></div>
             <div style="display:flex; justify-content:space-between; padding:8px 0; font-weight:700; font-size:16px; border-top:1px solid #ddd; margin-top:6px;"><div>Total</div><div>₹${
-              (bill.total || subtotal).toFixed(2)
+              bill.total || subtotal
             }</div></div>
           </div>
         </div>
