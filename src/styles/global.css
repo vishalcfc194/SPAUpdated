@@ -121,6 +121,17 @@ body {
     /* sit above the modal container but below modal-content's stacking */
 }
 
+/* Dashboard row highlights */
+.row-today td {
+    background-color: #d4edda !important;
+    /* green-ish */
+}
+
+.row-future td {
+    background-color: #fff3cd !important;
+    /* yellow-ish */
+}
+
 .btn-primary {
     background-color: var(--spa-accent);
     border-color: var(--spa-accent);

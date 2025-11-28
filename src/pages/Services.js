@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import ModalPortal from "../components/ModalPortal";
+import TableControls from "../components/TableControls";
 import {
   fetchServices,
   createService,
@@ -21,12 +22,39 @@ const Services = () => {
     price: 0,
     durationMinutes: 60,
   });
+  const [searchTerm, setSearchTerm] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const itemsPerPage = 10;
+
+  const handleRefresh = async () => {
+    try {
+      setIsRefreshing(true);
+      await dispatch(fetchServices()).unwrap();
+    } catch (e) {
+      console.error("Failed to refresh");
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   useEffect(() => {
-    dispatch(fetchServices());
-    const id = setInterval(() => dispatch(fetchServices()), 5000);
+    handleRefresh();
+    const id = setInterval(() => handleRefresh(), 30000);
     return () => clearInterval(id);
   }, [dispatch]);
+
+  // Filter and paginate
+  const filtered = services.filter(
+    (s) =>
+      (s.title || s.name || "")
+        .toLowerCase()
+        .includes(searchTerm.toLowerCase()) ||
+      (s.description || "").toLowerCase().includes(searchTerm.toLowerCase())
+  );
+  const totalPages = Math.ceil(filtered.length / itemsPerPage);
+  const start = (currentPage - 1) * itemsPerPage;
+  const paginatedServices = filtered.slice(start, start + itemsPerPage);
 
   const openAdd = () => {
     setEditing(null);
@@ -68,7 +96,7 @@ const Services = () => {
 
   return (
     <div>
-      <div className="d-flex justify-content-between align-items-center">
+      <div className="d-flex justify-content-between align-items-center mb-3">
         <h3>
           Services{" "}
           {status === "loading" && (
@@ -80,47 +108,72 @@ const Services = () => {
         </button>
       </div>
 
-      <div className="row g-3 mt-3">
-        {services.map((s) => (
-          <div className="col-sm-6 col-md-4 col-lg-3" key={s._id || s.id}>
-            <div className="card service-card p-3 h-100">
-              <div className="d-flex justify-content-between align-items-start">
-                <div>
-                  <h6 className="mb-1">{s.title || s.name}</h6>
-                  <div className="small text-muted">
-                    {s.durationMinutes
-                      ? s.durationMinutes + " mins"
-                      : s.duration}
-                  </div>
-                </div>
-                <div className="text-end">
-                  <div className="fw-bold">₹{s.price || "Call"}</div>
-                </div>
-              </div>
-              <div className="mt-3 d-flex justify-content-between">
-                <div>
-                  <button className="btn btn-sm btn-outline-success me-2">
-                    Select
-                  </button>
-                </div>
-                <div>
-                  <button
-                    className="btn btn-sm btn-outline-primary me-1"
-                    onClick={() => openEdit(s)}
-                  >
-                    Edit
-                  </button>
-                  <button
-                    className="btn btn-sm btn-outline-danger"
-                    onClick={() => dispatch(deleteService(s._id || s.id))}
-                  >
-                    Delete
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        ))}
+      {/* Table View */}
+      <div className="card p-3 mb-4">
+        <div className="table-responsive">
+          <table className="table table-striped">
+            <thead>
+              <tr>
+                <th colSpan={5}>
+                  <TableControls
+                    searchTerm={searchTerm}
+                    onSearchChange={(term) => {
+                      setSearchTerm(term);
+                      setCurrentPage(1);
+                    }}
+                    onRefresh={handleRefresh}
+                    onRefreshLoading={isRefreshing}
+                    currentPage={currentPage}
+                    onPageChange={setCurrentPage}
+                    totalPages={totalPages}
+                    totalItems={filtered.length}
+                  />
+                </th>
+              </tr>
+              <tr>
+                <th>Title</th>
+                <th>Description</th>
+                <th>Duration</th>
+                <th>Price</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {paginatedServices.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="text-center text-muted py-3">
+                    No services found
+                  </td>
+                </tr>
+              ) : (
+                paginatedServices.map((s) => (
+                  <tr key={s._id || s.id}>
+                    <td className="fw-bold">{s.title || s.name}</td>
+                    <td className="small">{s.description || "-"}</td>
+                    <td>
+                      {s.durationMinutes ? s.durationMinutes + " mins" : "-"}
+                    </td>
+                    <td>₹{s.price || 0}</td>
+                    <td>
+                      <button
+                        className="btn btn-sm btn-outline-primary me-1"
+                        onClick={() => openEdit(s)}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        className="btn btn-sm btn-outline-danger"
+                        onClick={() => dispatch(deleteService(s._id || s.id))}
+                      >
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {show && (
@@ -129,7 +182,10 @@ const Services = () => {
             <div className="modal d-block">
               <div className="modal-dialog modal-lg-custom">
                 <form className="modal-content" onSubmit={submit}>
-                  <div className="modal-header">
+                  <div
+                    className="modal-header"
+                    style={{ backgroundColor: "#f2f2f2" }}
+                  >
                     <h5 className="modal-title">
                       {editing ? "Edit Service" : "Add Service"}
                     </h5>
@@ -147,6 +203,7 @@ const Services = () => {
                       <label className="form-label">Title</label>
                       <input
                         className="form-control"
+                        placeholder="Enter Title"
                         value={form.title}
                         onChange={(e) =>
                           setForm({ ...form, title: e.target.value })
@@ -158,6 +215,7 @@ const Services = () => {
                       <label className="form-label">Description</label>
                       <textarea
                         className="form-control"
+                        placeholder="Enter Description"
                         value={form.description}
                         onChange={(e) =>
                           setForm({ ...form, description: e.target.value })
@@ -168,6 +226,7 @@ const Services = () => {
                       <label className="form-label">Price</label>
                       <input
                         className="form-control"
+                        placeholder="Enter Price"
                         type="number"
                         value={form.price}
                         onChange={(e) =>
@@ -180,6 +239,7 @@ const Services = () => {
                       <label className="form-label">Duration (minutes)</label>
                       <input
                         className="form-control"
+                        placeholder="Enter Duration"
                         type="number"
                         value={form.durationMinutes}
                         onChange={(e) =>
@@ -188,11 +248,17 @@ const Services = () => {
                       />
                     </div>
                   </div>
-                  <div className="modal-footer">
+                  <div
+                    className="modal-footer"
+                    style={{ backgroundColor: "#f2f2f2" }}
+                  >
                     <button
                       type="button"
-                      className="btn btn-secondary"
-                      onClick={() => setShow(false)}
+                      className="btn btn-outline-secondary"
+                      onClick={() => {
+                        setShow(false);
+                        document.body.classList.remove("modal-open-blur");
+                      }}
                     >
                       Cancel
                     </button>

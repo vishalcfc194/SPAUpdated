@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import ModalPortal from "../components/ModalPortal";
+import TableControls from "../components/TableControls";
 import {
   fetchClients,
   createClient,
@@ -21,12 +22,38 @@ const Clients = () => {
     membership: "",
     notes: "",
   });
+  const [searchTerm, setSearchTerm] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const itemsPerPage = 10;
+
+  const handleRefresh = async () => {
+    try {
+      setIsRefreshing(true);
+      await dispatch(fetchClients()).unwrap();
+    } catch (e) {
+      console.error("Failed to refresh");
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   useEffect(() => {
-    dispatch(fetchClients());
-    const id = setInterval(() => dispatch(fetchClients()), 5000);
+    handleRefresh();
+    const id = setInterval(() => handleRefresh(), 30000);
     return () => clearInterval(id);
   }, [dispatch]);
+
+  // Filter and paginate
+  const filtered = clients.filter(
+    (c) =>
+      (c.name || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (c.phone || "").includes(searchTerm) ||
+      (c.email || "").toLowerCase().includes(searchTerm.toLowerCase())
+  );
+  const totalPages = Math.ceil(filtered.length / itemsPerPage);
+  const start = (currentPage - 1) * itemsPerPage;
+  const paginatedClients = filtered.slice(start, start + itemsPerPage);
 
   const openAdd = () => {
     setEditing(null);
@@ -90,6 +117,23 @@ const Clients = () => {
           <table className="table table-striped">
             <thead>
               <tr>
+                <th colSpan={7}>
+                  <TableControls
+                    searchTerm={searchTerm}
+                    onSearchChange={(term) => {
+                      setSearchTerm(term);
+                      setCurrentPage(1);
+                    }}
+                    onRefresh={handleRefresh}
+                    onRefreshLoading={isRefreshing}
+                    currentPage={currentPage}
+                    onPageChange={setCurrentPage}
+                    totalPages={totalPages}
+                    totalItems={filtered.length}
+                  />
+                </th>
+              </tr>
+              <tr>
                 <th>Name</th>
                 <th>Phone</th>
                 <th>Email</th>
@@ -100,12 +144,14 @@ const Clients = () => {
               </tr>
             </thead>
             <tbody>
-              {clients.length === 0 && (
+              {paginatedClients.length === 0 && (
                 <tr>
-                  <td colSpan={7}>No clients yet</td>
+                  <td colSpan={7} className="text-center text-muted py-3">
+                    No clients found
+                  </td>
                 </tr>
               )}
-              {clients.map((c) => (
+              {paginatedClients.map((c) => (
                 <tr key={c._id || c.id}>
                   <td>{c.name}</td>
                   <td>{c.phone}</td>
@@ -142,7 +188,10 @@ const Clients = () => {
             <div className="modal d-block" tabIndex={-1}>
               <div className="modal-dialog modal-lg-custom">
                 <form onSubmit={submit} className="modal-content">
-                  <div className="modal-header">
+                  <div
+                    className="modal-header"
+                    style={{ backgroundColor: "#f2f2f2" }}
+                  >
                     <h5 className="modal-title">
                       {editing ? "Edit Client" : "Add Client"}
                     </h5>
@@ -162,6 +211,7 @@ const Clients = () => {
                         <input
                           className="form-control"
                           value={form.name}
+                          placeholder="Enter full name"
                           required
                           onChange={(e) =>
                             setForm({ ...form, name: e.target.value })
@@ -172,6 +222,7 @@ const Clients = () => {
                         <label className="form-label">Phone</label>
                         <input
                           className="form-control"
+                          placeholder="Enter Phone Number"
                           value={form.phone}
                           onChange={(e) =>
                             setForm({ ...form, phone: e.target.value })
@@ -185,6 +236,7 @@ const Clients = () => {
                         <label className="form-label">Email</label>
                         <input
                           className="form-control"
+                          placeholder="Enter Email Address"
                           value={form.email}
                           onChange={(e) =>
                             setForm({ ...form, email: e.target.value })
@@ -195,6 +247,7 @@ const Clients = () => {
                         <label className="form-label">Address</label>
                         <input
                           className="form-control"
+                          placeholder="Enter Address"
                           value={form.address}
                           onChange={(e) =>
                             setForm({ ...form, address: e.target.value })
@@ -219,6 +272,7 @@ const Clients = () => {
                         <label className="form-label">Notes</label>
                         <input
                           className="form-control"
+                          placeholder="Enter Notes"
                           value={form.notes}
                           onChange={(e) =>
                             setForm({ ...form, notes: e.target.value })
@@ -227,11 +281,17 @@ const Clients = () => {
                       </div>
                     </div>
                   </div>
-                  <div className="modal-footer">
+                  <div
+                    className="modal-footer"
+                    style={{ backgroundColor: "#f2f2f2" }}
+                  >
                     <button
                       type="button"
-                      className="btn btn-secondary"
-                      onClick={() => setShowModal(false)}
+                      className="btn btn-outline-secondary"
+                      onClick={() => {
+                        setShowModal(false);
+                        document.body.classList.remove("modal-open-blur");
+                      }}
                     >
                       Cancel
                     </button>

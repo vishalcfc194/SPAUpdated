@@ -1,13 +1,22 @@
 import React from "react";
 import { useDispatch, useSelector } from "react-redux";
+import { useNavigate } from "react-router-dom";
 import { logout } from "../features/auth/authSlice";
 
 const Topbar = ({ toggleSidebar }) => {
   const dispatch = useDispatch();
+  const navigate = useNavigate();
   const { user } = useSelector((state) => state.auth);
 
   const handleLogout = () => {
     dispatch(logout());
+    // navigate to login page after logout
+    try {
+      navigate("/login", { replace: true });
+    } catch (e) {
+      // fallback: force full reload to login
+      window.location.href = "/login";
+    }
   };
 
   return (
@@ -33,7 +42,9 @@ const Topbar = ({ toggleSidebar }) => {
       <div className="d-flex align-items-center">
         <div className="me-3 text-end d-none d-md-block">
           <div className="fw-bold">7440534727</div>
-          <div className="small text-muted">{user?.email || "cindrellathefamilyspa@gmail.com"}</div>
+          <div className="small text-muted">
+            {user?.email || "cindrellathefamilyspa@gmail.com"}
+          </div>
         </div>
         <button className="btn btn-outline-danger" onClick={handleLogout}>
           Logout

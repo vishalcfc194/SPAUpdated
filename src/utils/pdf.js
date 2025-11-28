@@ -35,9 +35,11 @@ export const generatePDFBill = async (bill, options = { action: "open" }) => {
         : it.membership
         ? it.membership.name || it.membership
         : it.membershipName || it.serviceName || "Item";
-      const qty = it.quantity || 1;
-      const price = it.price || it.amount || 0;
-      const amount = qty * price;
+      // Determine quantity: prefer explicit quantity, then sessions (for membership), fallback to 1
+      const qtyRaw = it.quantity ?? it.sessions ?? it.count ?? 1;
+      const qty = Number(qtyRaw) || 1;
+      const price = Number(it.price ?? it.amount ?? it.rate ?? 0) || 0;
+      const amount = Math.round(qty * price * 100) / 100;
       return { name, qty, price, amount };
     });
 

@@ -1,6 +1,8 @@
 ﻿import React, { useEffect, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
+import { useNavigate } from "react-router-dom";
 import ModalPortal from "../components/ModalPortal";
+import TableControls from "../components/TableControls";
 import {
   fetchMemberships,
   createMembership,
@@ -24,6 +26,7 @@ const Memberships = () => {
   const { items: memberships, status } = useSelector(
     (s) => s.memberships || { items: [] }
   );
+  const navigate = useNavigate();
   const [show, setShow] = useState(false);
   const [editing, setEditing] = useState(null);
   const [planMode, setPlanMode] = useState(false);
@@ -54,15 +57,47 @@ const Memberships = () => {
   });
   const [showServiceForm, setShowServiceForm] = useState(false);
   const [selectedServiceId, setSelectedServiceId] = useState(null);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const itemsPerPage = 10;
+
+  const handleRefresh = async () => {
+    try {
+      setIsRefreshing(true);
+      await Promise.all([
+        dispatch(fetchMemberships()).unwrap(),
+        dispatch(fetchBills()).unwrap(),
+        dispatch(fetchClientMembershipServices()).unwrap(),
+        dispatch(fetchClients()).unwrap(),
+      ]);
+    } catch (e) {
+      console.error("Failed to refresh");
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   useEffect(() => {
-    dispatch(fetchMemberships());
-    dispatch(fetchBills());
-    dispatch(fetchClientMembershipServices());
-    dispatch(fetchClients());
-    const id = setInterval(() => dispatch(fetchMemberships()), 5000);
+    handleRefresh();
+    const id = setInterval(() => handleRefresh(), 30000);
     return () => clearInterval(id);
   }, [dispatch]);
+
+  // Filter and paginate membership clients
+  const membershipBills = bills.filter((b) =>
+    (b.items || []).some((it) => it.itemType === "membership")
+  );
+  const filtered = membershipBills.filter(
+    (b) =>
+      (b.clientName || b.client || "")
+        .toLowerCase()
+        .includes(searchTerm.toLowerCase()) ||
+      (b.clientPhone || "").includes(searchTerm)
+  );
+  const totalPages = Math.ceil(filtered.length / itemsPerPage);
+  const start = (currentPage - 1) * itemsPerPage;
+  const paginatedBills = filtered.slice(start, start + itemsPerPage);
 
   // When opening manageServices, initialize checkbox state from logged services
   useEffect(() => {
@@ -103,35 +138,39 @@ const Memberships = () => {
         type: "Hamam",
       });
 
+    // Build a deterministic checked map by consuming serviceList entries
+    // for each logged service. Match by exact label first, then by type.
     const checked = {};
     const matchedServices = (services || []).filter(
       (s) =>
-        String(s.membershipBill || s.membershipBill?._id) ===
+        String(s.membershipBill?._id || s.membershipBill) ===
         String(manageServices._id || manageServices.id)
     );
 
-    console.log(
-      "Debug - manageServices ID:",
-      String(manageServices._id || manageServices.id)
-    );
-    console.log("Debug - All services:", services);
-    console.log("Debug - Matched services for this bill:", matchedServices);
+    // Track which serviceList indices are already consumed (so duplicates don't mark the same checkbox)
+    const consumed = new Set();
 
     matchedServices.forEach((s) => {
-      console.log("Debug - Processing service:", {
-        serviceName: s.serviceName,
-        serviceLabel: s.serviceLabel,
-      });
-      const found = serviceList.find(
-        (sl) =>
-          sl.label === (s.serviceLabel || s.service_label || s.service_taken) ||
-          (sl.type === s.serviceName && sl.label === s.serviceLabel)
+      const label = s.serviceLabel || s.service_label || s.service_taken || "";
+
+      // try exact label match on first unused entry
+      let idx = serviceList.findIndex(
+        (sl, i) => !consumed.has(i) && label && sl.label === label
       );
-      console.log("Debug - Found service in list:", found);
-      if (found) checked[found.id] = true;
+
+      // fallback: match by type (SPA/Jacuzzi/Hamam) on first unused entry
+      if (idx === -1 && s.serviceName) {
+        idx = serviceList.findIndex(
+          (sl, i) => !consumed.has(i) && sl.type === s.serviceName
+        );
+      }
+
+      if (idx !== -1) {
+        consumed.add(idx);
+        checked[serviceList[idx].id] = true;
+      }
     });
 
-    console.log("Debug - Final checked state:", checked);
     setServiceCheckboxes(checked);
   }, [manageServices, services, memberships]);
 
@@ -153,18 +192,8 @@ const Memberships = () => {
   };
 
   const openAddPlan = () => {
-    setEditing(null);
-    setForm({
-      name: "",
-      price: 0,
-      timing: "",
-      spa_sessions: 0,
-      jacuzzi: 0,
-      hamam: 0,
-    });
-    setShow(true);
-    document.body.classList.add("modal-open-blur");
-    setPlanMode(true);
+    // redirect to dedicated Membership Plans page
+    navigate("/membership-plans");
   };
 
   const openEdit = (m) => {
@@ -273,6 +302,10 @@ const Memberships = () => {
     }
   };
 
+  const formatCurrency = (n) => {
+    return `₹${Math.round(Number(n || 0))}.00`;
+  };
+
   return (
     <div>
       {/* Membership Clients Section - FIRST */}
@@ -283,13 +316,33 @@ const Memberships = () => {
         </button>
       </div>
 
+      {/* Controls: Search, Refresh, Pagination */}
       <div className="card p-3 mb-4">
         <div className="table-responsive">
           <table className="table table-striped">
             <thead>
               <tr>
+                <th colSpan={6}>
+                  <TableControls
+                    searchTerm={searchTerm}
+                    onSearchChange={(term) => {
+                      setSearchTerm(term);
+                      setCurrentPage(1);
+                    }}
+                    onRefresh={handleRefresh}
+                    onRefreshLoading={isRefreshing}
+                    currentPage={currentPage}
+                    onPageChange={setCurrentPage}
+                    totalPages={totalPages}
+                    totalItems={filtered.length}
+                  />
+                </th>
+              </tr>
+              <tr>
                 <th>Client Details</th>
                 <th>Plan & Purchase Date</th>
+                <th className="text-center text-bold">Amount</th>
+                <th className="text-center">Last Service</th>
                 <th>Services</th>
                 <th>Actions</th>
               </tr>
@@ -299,193 +352,228 @@ const Memberships = () => {
                 (b.items || []).some((it) => it.itemType === "membership")
               ).length === 0 && (
                 <tr>
-                  <td colSpan={4} className="text-center text-muted py-3">
+                  <td colSpan={6} className="text-center text-muted py-3">
                     No membership clients yet
                   </td>
                 </tr>
               )}
-              {bills
-                .filter((b) =>
-                  (b.items || []).some((it) => it.itemType === "membership")
-                )
-                .map((p) => {
-                  const item =
-                    (p.items || []).find(
-                      (it) => it.itemType === "membership"
-                    ) || {};
-                  const plan =
-                    memberships.find(
-                      (m) =>
-                        (m._id || m.id) ===
-                        (item.membership || item.membershipId)
-                    ) || {};
+              {paginatedBills.map((p) => {
+                const item =
+                  (p.items || []).find((it) => it.itemType === "membership") ||
+                  {};
+                const plan =
+                  memberships.find(
+                    (m) =>
+                      (m._id || m.id) === (item.membership || item.membershipId)
+                  ) || {};
 
-                  // Calculate allocated, used, remaining based on SPA/Jacuzzi/Hamam
-                  const spaSessions = Number(
-                    item.spa_sessions || plan.spa_sessions || 0
+                // Calculate allocated, used, remaining based on SPA/Jacuzzi/Hamam
+                const spaSessions = Number(
+                  item.spa_sessions || plan.spa_sessions || 0
+                );
+                const jacuzziSessions = Number(
+                  item.jacuzzi || plan.jacuzzi || 0
+                );
+                const hamamSessions = Number(item.hamam || plan.hamam || 0);
+                const totalAllocated =
+                  spaSessions + jacuzziSessions + hamamSessions;
+
+                const used = (services || []).filter((s) => {
+                  const sBillId = String(
+                    s.membershipBill?._id || s.membershipBill || ""
                   );
-                  const jacuzziSessions = Number(
-                    item.jacuzzi || plan.jacuzzi || 0
+                  const pId = String(p._id || p.id || "");
+                  return sBillId === pId;
+                }).length;
+                const remaining = Math.max(0, totalAllocated - used);
+
+                const planName =
+                  plan.name ||
+                  item.title ||
+                  (item.membership && typeof item.membership === "object"
+                    ? item.membership.name || item.membership.title
+                    : item.membership) ||
+                  "Membership";
+
+                const purchaseDate = formatDateLong(
+                  p.dateFrom || p.createdAt || p.date
+                );
+
+                // find services logged against this membership bill and compute latest date
+                const servicesForBill = (services || []).filter((s) => {
+                  const sBillId = String(
+                    s.membershipBill?._id || s.membershipBill || ""
                   );
-                  const hamamSessions = Number(item.hamam || plan.hamam || 0);
-                  const totalAllocated =
-                    spaSessions + jacuzziSessions + hamamSessions;
+                  const pId = String(p._id || p.id || "");
+                  return sBillId === pId;
+                });
 
-                  const used = (services || []).filter((s) => {
-                    const sBillId = String(
-                      s.membershipBill?._id || s.membershipBill || ""
-                    );
-                    const pId = String(p._id || p.id || "");
-                    return sBillId === pId;
-                  }).length;
-                  const remaining = Math.max(0, totalAllocated - used);
+                let latestServiceTs = 0;
+                servicesForBill.forEach((s) => {
+                  const ts = s.date
+                    ? Date.parse(s.date)
+                    : s.createdAt
+                    ? Date.parse(s.createdAt)
+                    : NaN;
+                  if (!isNaN(ts) && ts > latestServiceTs) latestServiceTs = ts;
+                });
 
-                  const planName =
-                    plan.name ||
-                    item.title ||
-                    (item.membership && typeof item.membership === "object"
-                      ? item.membership.name || item.membership.title
-                      : item.membership) ||
-                    "Membership";
-
-                  const purchaseDate = formatDateLong(
-                    p.dateFrom || p.createdAt || p.date
-                  );
-
-                  return (
-                    <tr key={p._id || p.id}>
-                      <td>
-                        <div className="fw-bold">
-                          {p.clientName || p.client}
+                return (
+                  <tr key={p._id || p.id}>
+                    <td>
+                      <div className="fw-bold">{p.clientName || p.client}</div>
+                      <small className="text-muted">
+                        {p.clientPhone || "-"}
+                      </small>
+                    </td>
+                    <td>
+                      <div>{planName}</div>
+                      <small className="text-muted">{purchaseDate}</small>
+                    </td>
+                    <td className="text-center align-middle">
+                      {formatCurrency(p.total || item.price || 0)}
+                    </td>
+                    <td className="text-center align-middle">
+                      {latestServiceTs
+                        ? formatDateLong(new Date(latestServiceTs))
+                        : "-"}
+                    </td>
+                    <td>
+                      <div className="small">
+                        <div>
+                          Allocated: <strong>{totalAllocated}</strong>
                         </div>
-                        <small className="text-muted">
-                          {p.clientPhone || "-"}
-                        </small>
-                      </td>
-                      <td>
-                        <div>{planName}</div>
-                        <small className="text-muted">{purchaseDate}</small>
-                      </td>
-                      <td>
-                        <div className="small">
-                          <div>
-                            Allocated: <strong>{totalAllocated}</strong>
-                          </div>
-                          <div>
-                            Used: <strong>{used}</strong>
-                          </div>
-                          <div>
-                            Remaining:{" "}
-                            <strong
-                              className={
-                                remaining === 0 ? "text-danger" : "text-success"
-                              }
-                            >
-                              {remaining}
-                            </strong>
-                          </div>
+                        <div>
+                          Used: <strong>{used}</strong>
                         </div>
-                      </td>
-                      <td>
-                        <div className="d-flex gap-2">
-                          <button
-                            className="btn btn-sm btn-outline-success"
-                            onClick={() => {
-                              setManageServices(p);
-                              setServiceCheckboxes({});
-                              document.body.classList.add("modal-open-blur");
-                            }}
+                        <div>
+                          Remaining:{" "}
+                          <strong
+                            className={
+                              remaining === 0 ? "text-danger" : "text-success"
+                            }
                           >
-                            Manage Services
-                          </button>
-                          <button
-                            className="btn btn-sm btn-outline-danger"
-                            onClick={() => {
-                              if (
-                                window.confirm(
-                                  "Are you sure you want to delete this membership purchase?"
-                                )
-                              ) {
-                                dispatch(deleteBill(p._id || p.id));
-                              }
-                            }}
-                          >
-                            Delete
-                          </button>
+                            {remaining}
+                          </strong>
                         </div>
-                      </td>
-                    </tr>
-                  );
-                })}
+                      </div>
+                    </td>
+                    <td>
+                      <div className="d-flex gap-2">
+                        <button
+                          className="btn btn-sm btn-outline-success"
+                          onClick={() => {
+                            setManageServices(p);
+                            setServiceCheckboxes({});
+                            document.body.classList.add("modal-open-blur");
+                          }}
+                        >
+                          Manage Services
+                        </button>
+                        <button
+                          className="btn btn-sm btn-outline-danger"
+                          onClick={() => {
+                            if (
+                              window.confirm(
+                                "Are you sure you want to delete this membership purchase?"
+                              )
+                            ) {
+                              dispatch(deleteBill(p._id || p.id));
+                            }
+                          }}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
       </div>
 
-      {/* Membership Plans Section - BOTTOM */}
-      <div className="d-flex justify-content-between align-items-center mb-3">
-        <h3>
-          Membership Plans{" "}
-          {status === "loading" && (
-            <small className="text-muted">(updating...)</small>
-          )}
-        </h3>
-        <button className="btn btn-primary" onClick={openAddPlan}>
-          + Add Plan
-        </button>
-      </div>
+      {/* Pagination Controls */}
+      {totalPages > 1 && (
+        <div className="d-flex justify-content-center gap-2 mb-4">
+          <button
+            className="btn btn-sm btn-outline-secondary"
+            disabled={currentPage === 1}
+            onClick={() => setCurrentPage(currentPage - 1)}
+          >
+            ← Previous
+          </button>
+          {Array.from({ length: totalPages }, (_, i) => (
+            <button
+              key={i + 1}
+              className={`btn btn-sm ${
+                currentPage === i + 1 ? "btn-primary" : "btn-outline-secondary"
+              }`}
+              onClick={() => setCurrentPage(i + 1)}
+            >
+              {i + 1}
+            </button>
+          ))}
+          <button
+            className="btn btn-sm btn-outline-secondary"
+            disabled={currentPage === totalPages}
+            onClick={() => setCurrentPage(currentPage + 1)}
+          >
+            Next →
+          </button>
+        </div>
+      )}
 
-      <div className="card p-3">
-        <div className="table-responsive">
-          <table className="table table-striped">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Timing</th>
-                <th>SPA</th>
-                <th>Jacuzzi</th>
-                <th>Hamam</th>
-                <th>Price</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {memberships.length === 0 && (
+      {/* Services Section */}
+      <div className="mb-4">
+        <h3>Services</h3>
+        <div className="card p-3">
+          <div className="table-responsive">
+            <table className="table table-striped">
+              <thead>
                 <tr>
-                  <td colSpan={7} className="text-center text-muted py-3">
-                    No membership plans yet
-                  </td>
+                  <th>Service Name</th>
+                  <th>Used Count</th>
+                  <th>Last Used</th>
                 </tr>
-              )}
-              {memberships.map((m, idx) => (
-                <tr key={m._id || m.id || idx}>
-                  <td>
-                    <div>{m.name}</div>
-                    <small className="text-muted">{m.therapy_details}</small>
-                  </td>
-                  <td>{m.timing || "-"}</td>
-                  <td>{m.spa_sessions || "-"}</td>
-                  <td>{m.jacuzzi || "-"}</td>
-                  <td>{m.hamam || "-"}</td>
-                  <td>₹{m.price}</td>
-                  <td>
-                    <button
-                      className="btn btn-sm btn-outline-primary me-1"
-                      onClick={() => openEdit(m)}
-                    >
-                      Edit
-                    </button>
-                    <button
-                      className="btn btn-sm btn-outline-danger"
-                      onClick={() => dispatch(deleteMembership(m._id || m.id))}
-                    >
-                      Delete
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {services.length === 0 ? (
+                  <tr>
+                    <td colSpan={3} className="text-center text-muted py-3">
+                      No services logged yet
+                    </td>
+                  </tr>
+                ) : (
+                  (() => {
+                    const servicesSummary = {};
+                    services.forEach((s) => {
+                      const name = s.serviceName || "Unknown";
+                      if (!servicesSummary[name])
+                        servicesSummary[name] = { count: 0, lastDate: null };
+                      servicesSummary[name].count++;
+                      const sDate = s.date || s.createdAt;
+                      const sTs = sDate ? Date.parse(sDate) : 0;
+                      const lastTs = servicesSummary[name].lastDate
+                        ? Date.parse(servicesSummary[name].lastDate)
+                        : 0;
+                      if (sTs > lastTs) servicesSummary[name].lastDate = sDate;
+                    });
+                    return Object.entries(servicesSummary).map(
+                      ([name, data]) => (
+                        <tr key={name}>
+                          <td>{name}</td>
+                          <td>{data.count}</td>
+                          <td>{formatDateLong(data.lastDate)}</td>
+                        </tr>
+                      )
+                    );
+                  })()
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
 
@@ -496,9 +584,12 @@ const Memberships = () => {
               <div className="modal-dialog modal-xl modal-dialog-centered">
                 <form
                   onSubmit={submit}
-                  className="modal-content p-3 shadow-sm rounded"
+                  className="modal-content shadow-sm rounded"
                 >
-                  <div className="modal-header border-0">
+                  <div
+                    className="modal-header"
+                    style={{ backgroundColor: "#f2f2f2" }}
+                  >
                     <div>
                       <h5 className="modal-title mb-0">
                         {form.name
@@ -761,7 +852,10 @@ const Memberships = () => {
                       )}
                     </div>
                   </div>
-                  <div className="modal-footer border-0">
+                  <div
+                    className="modal-footer border-0"
+                    style={{ backgroundColor: "#f2f2f2" }}
+                  >
                     <button
                       type="button"
                       className="btn btn-outline-secondary"
@@ -798,7 +892,10 @@ const Memberships = () => {
             <div className="modal d-block">
               <div className="modal-dialog modal-lg-custom">
                 <div className="modal-content">
-                  <div className="modal-header">
+                  <div
+                    className="modal-header"
+                    style={{ backgroundColor: "#f2f2f2" }}
+                  >
                     <h5 className="modal-title">Manage Membership</h5>
                     <button
                       className="btn-close"
@@ -935,9 +1032,12 @@ const Memberships = () => {
                       );
                     })()}
                   </div>
-                  <div className="modal-footer">
+                  <div
+                    className="modal-footer"
+                    style={{ backgroundColor: "#f2f2f2" }}
+                  >
                     <button
-                      className="btn btn-secondary"
+                      className="btn btn-primary"
                       onClick={() => {
                         setManagePurchase(null);
                         document.body.classList.remove("modal-open-blur");
@@ -1020,7 +1120,10 @@ const Memberships = () => {
             <div className="modal d-block">
               <div className="modal-dialog modal-lg">
                 <div className="modal-content">
-                  <div className="modal-header">
+                  <div
+                    className="modal-header"
+                    style={{ backgroundColor: "#f2f2f2" }}
+                  >
                     <h5 className="modal-title">Manage Services Used</h5>
                     <button
                       className="btn-close"
@@ -1169,8 +1272,11 @@ const Memberships = () => {
                         <div className="modal-backdrop show">
                           <div className="modal d-block" tabIndex={-1}>
                             <div className="modal-dialog modal-dialog-centered">
-                              <div className="modal-content p-3 shadow-sm rounded">
-                                <div className="modal-header border-0">
+                              <div className="modal-content shadow-sm rounded">
+                                <div
+                                  className="modal-header"
+                                  style={{ backgroundColor: "#f2f2f2" }}
+                                >
                                   <h5 className="modal-title">
                                     Log Service Usage
                                   </h5>
@@ -1243,9 +1349,12 @@ const Memberships = () => {
                                     </div>
                                   </div>
                                 </div>
-                                <div className="modal-footer border-0">
+                                <div
+                                  className="modal-footer border-0"
+                                  style={{ backgroundColor: "#f2f2f2" }}
+                                >
                                   <button
-                                    className="btn btn-secondary"
+                                    className="btn btn-primary"
                                     onClick={() => {
                                       setShowServiceForm(false);
                                       setSelectedServiceId(null);
@@ -1338,7 +1447,6 @@ const Memberships = () => {
                               <th>Date</th>
                               <th>From Time</th>
                               <th>To Time</th>
-                              <th>Notes</th>
                               <th>Action</th>
                             </tr>
                           </thead>
@@ -1358,16 +1466,9 @@ const Memberships = () => {
                               .map((s) => (
                                 <tr key={s._id || s.id}>
                                   <td>{s.serviceName}</td>
-                                  <td>
-                                    {
-                                      new Date(s.date)
-                                        .toISOString()
-                                        .split("T")[0]
-                                    }
-                                  </td>
+                                  <td>{formatDateLong(s.date)}</td>
                                   <td>{s.fromTime || "-"}</td>
                                   <td>{s.toTime || "-"}</td>
-                                  <td className="small">{s.notes}</td>
                                   <td>
                                     <button
                                       className="btn btn-sm btn-danger"
@@ -1408,9 +1509,12 @@ const Memberships = () => {
                       </div>
                     </div>
                   </div>
-                  <div className="modal-footer">
+                  <div
+                    className="modal-footer"
+                    style={{ backgroundColor: "#f2f2f2" }}
+                  >
                     <button
-                      className="btn btn-secondary"
+                      className="btn btn-primary"
                       onClick={() => {
                         setManageServices(null);
                         document.body.classList.remove("modal-open-blur");

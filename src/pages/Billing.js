@@ -9,31 +9,79 @@ import {
 import { fetchStaff } from "../features/staff/staffSlice";
 import { fetchServices } from "../features/services/serviceSlice";
 import { fetchMemberships } from "../features/memberships/membershipSlice";
-import { createClient } from "../features/clients/clientSlice";
+import { createClient, deleteClient } from "../features/clients/clientSlice";
 import { generatePDFBill } from "../utils/pdf";
+import { toast } from "react-toastify";
 import ModalPortal from "../components/ModalPortal";
+import TableControls from "../components/TableControls";
 
-const todayISO = new Date().toISOString().slice(0, 10);
+const todayISO = (() => {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+})();
 
 function formatDateDisplay(d) {
   if (!d) return "";
-  // if already YYYY-MM-DD
-  if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+  // Accept ISO date or timestamp and render like "15 jan 2025"
   try {
-    return new Date(d).toISOString().slice(0, 10);
+    let dt;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(d)) {
+      dt = new Date(d + "T00:00:00");
+    } else {
+      dt = new Date(d);
+    }
+    if (isNaN(dt.getTime())) return String(d);
+    const day = dt.getDate();
+    const monthNames = [
+      "jan",
+      "feb",
+      "mar",
+      "apr",
+      "may",
+      "jun",
+      "jul",
+      "aug",
+      "sep",
+      "oct",
+      "nov",
+      "dec",
+    ];
+    const month = monthNames[dt.getMonth()];
+    const year = dt.getFullYear();
+    return `${day} ${month} ${year}`;
   } catch (e) {
     return String(d);
   }
 }
 
 function parseServiceDuration(s) {
-  // Expect service.duration as minutes or string "HH:MM"
+  // Accept multiple possible fields and formats. Return minutes.
   if (!s) return 0;
-  if (typeof s.duration === "number") return s.duration;
-  if (typeof s.duration === "string") {
-    const m = s.duration.match(/^(\d+):(\d+)$/);
+  const maybe = (obj, keys) => {
+    for (const k of keys) {
+      if (obj[k] !== undefined && obj[k] !== null) return obj[k];
+    }
+    return undefined;
+  };
+  const val = maybe(s, [
+    "duration",
+    "durationMinutes",
+    "minutes",
+    "time",
+    "length",
+    "duration_min",
+    "duration_mins",
+  ]);
+  if (val === undefined || val === null || val === "") return 0;
+  if (typeof val === "number") return val;
+  if (typeof val === "string") {
+    // formats: "HH:MM" or numeric string (minutes)
+    const m = String(val).match(/^(\d+):(\d+)$/);
     if (m) return Number(m[1]) * 60 + Number(m[2]);
-    const n = Number(s.duration);
+    const n = Number(String(val).replace(/[^0-9.]/g, ""));
     if (!isNaN(n)) return n;
   }
   return 0;
@@ -70,6 +118,12 @@ function format24To12Display(hhmm) {
   if (!hhmm) return "";
   const p = hhmmTo12(hhmm);
   return `${p.h12}:${p.mm} ${p.ampm}`;
+}
+
+// Format amount to show no decimals but always ".00" suffix
+function formatNoDecimal(n) {
+  const num = Number(n) || 0;
+  return `${Math.round(num)}.00`;
 }
 
 function parse12InputTo24(input) {
@@ -142,9 +196,10 @@ const Billing = () => {
     to: "",
   });
 
-  const [editingFrom, setEditingFrom] = useState("");
-  const [editingTo, setEditingTo] = useState("");
-  const memberships = useSelector((s) => s.memberships.items || []);
+  const [search, setSearch] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const itemsPerPage = 10;
 
   const [selectedMembershipPlan, setSelectedMembershipPlan] = useState(null);
   const [useMembership, setUseMembership] = useState(false);
@@ -158,10 +213,52 @@ const Billing = () => {
     dispatch(fetchStaff());
   }, [dispatch]);
 
-  useEffect(() => {
-    setEditingFrom(format24To12Display(form.from));
-    setEditingTo(format24To12Display(form.to));
-  }, [form.from, form.to]);
+  const handleRefresh = async () => {
+    try {
+      setIsRefreshing(true);
+      await dispatch(fetchBills()).unwrap();
+      toast.success("Refreshed data successfully");
+    } catch (e) {
+      toast.error("Failed to refresh bills");
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  // Helper: enrich bill before generating PDF so service and staff names are present
+  const enrichBillForPDF = (result) => {
+    try {
+      const enriched = {
+        ...result,
+        items: (result.items || []).map((it) => {
+          try {
+            if (it.itemType === "service") {
+              const sid = it.service || it.serviceId || it._id || it.id || "";
+              const svc = services.find(
+                (s) => String(s._id || s.id) === String(sid)
+              );
+              if (svc) return { ...it, service: svc };
+            }
+          } catch (e) {
+            // ignore
+          }
+          return it;
+        }),
+        staff:
+          result.staff && (result.staff.name || result.staff._id)
+            ? result.staff
+            : result.staff
+            ? // if staff is string id, try lookup
+              staff.find(
+                (st) => String(st._id || st.id) === String(result.staff)
+              ) || { name: result.staff }
+            : null,
+      };
+      return enriched;
+    } catch (e) {
+      return result;
+    }
+  };
 
   const openModal = () => {
     setEditingBill(null);
@@ -200,12 +297,29 @@ const Billing = () => {
     );
     const price = item ? item.price : "";
     const dur = item ? parseServiceDuration(item) : 0;
-    setForm((prev) => ({
-      ...prev,
-      serviceId: value,
-      amount: price,
-      to: dur && prev.from ? addMinutesToTime(prev.from, dur) : prev.to,
-    }));
+    // determine default from (now rounded to next 10 minutes)
+    const defaultFrom = (() => {
+      const d = new Date();
+      const roundTo = 10; // minutes
+      const mins = Math.ceil(d.getMinutes() / roundTo) * roundTo;
+      d.setMinutes(mins);
+      d.setSeconds(0);
+      const hh = pad(d.getHours());
+      const mm = pad(d.getMinutes());
+      return `${hh}:${mm}`;
+    })();
+    setForm((prev) => {
+      // if editing an existing bill, prefer existing from if set; otherwise use defaultFrom
+      const fromVal = editingBill ? prev.from || defaultFrom : defaultFrom;
+      return {
+        ...prev,
+        serviceId: value,
+        amount: price,
+        from: fromVal,
+        // always set `to` based on service duration (even if dur is 0 it will be same as from)
+        to: addMinutesToTime(fromVal, dur || 0),
+      };
+    });
   };
 
   function getActiveMembershipPurchasesForClient(clientNameOrPhone) {
@@ -255,12 +369,25 @@ const Billing = () => {
 
   const isFormValid = () => {
     const hasClient = String(form.client || "").trim() !== "";
+    const hasPhone = String(form.phone || "").trim() !== "";
     const hasService = String(form.serviceId || "").trim() !== "";
     const hasAmount = Number(form.amount) > 0;
     const hasDate = String(form.date || "").trim() !== "";
     const hasFrom = String(form.from || "").trim() !== "";
     const hasTo = String(form.to || "").trim() !== "";
-    return hasClient && hasService && hasAmount && hasDate && hasFrom && hasTo;
+    const hasAddress = String(form.address || "").trim() !== "";
+    const hasStaff = String(form.staff || "").trim() !== "";
+    return (
+      hasClient &&
+      hasPhone &&
+      hasAddress &&
+      hasService &&
+      hasStaff &&
+      hasAmount &&
+      hasDate &&
+      hasFrom &&
+      hasTo
+    );
   };
 
   const computeNetAmount = () => {
@@ -284,6 +411,7 @@ const Billing = () => {
       item.membershipPurchaseId = selectedMembershipPurchaseId;
       item.membershipUsed = true;
     }
+
     const payload = {
       clientName: form.client,
       clientPhone: form.phone,
@@ -294,7 +422,10 @@ const Billing = () => {
       dateFrom: form.date,
       timeFrom: form.from,
       timeTo: form.to,
+      // send staff id (server expects ObjectId)
+      staff: form.staff || undefined,
     };
+
     try {
       let clientId = null;
       if (form.client) {
@@ -312,46 +443,39 @@ const Billing = () => {
         }
       }
       if (clientId) payload.client = clientId;
+
       let result;
       if (editingBill) {
         result = await dispatch(
           updateBill({ id: editingBill._id || editingBill.id, data: payload })
         ).unwrap();
       } else {
-        result = await dispatch(createBill(payload)).unwrap();
+        // create bill and rollback created client if bill creation fails
+        try {
+          result = await dispatch(createBill(payload)).unwrap();
+        } catch (createErr) {
+          if (clientId) {
+            try {
+              await dispatch(deleteClient(clientId)).unwrap();
+            } catch (delErr) {
+              // ignore deletion error
+            }
+          }
+          throw createErr;
+        }
       }
-      generatePDFBill(result);
+
+      // Enrich result and refresh table so UI shows latest data
+      const enriched = enrichBillForPDF(result);
+      generatePDFBill(enriched);
+      // refresh bills list to reflect create/update immediately
+      dispatch(fetchBills());
       setShowModal(false);
       setEditingBill(null);
       document.body.classList.remove("modal-open-blur");
     } catch (err) {
-      // ignore — handled elsewhere
+      // ignore — handled elsewhere (errors are shown by thunks)
     }
-  };
-
-  const onFromBlur = () => {
-    const parsed = parse12InputTo24(editingFrom);
-    if (parsed) {
-      const sel = services.find(
-        (s) =>
-          (s._id || s.id) === form.serviceId ||
-          String(s._id || s.id) === String(form.serviceId)
-      );
-      const dur = sel ? parseServiceDuration(sel) : 0;
-      setForm((prev) => ({
-        ...prev,
-        from: parsed,
-        to: dur && parsed ? addMinutesToTime(parsed, dur) : prev.to,
-      }));
-    } else {
-      setEditingFrom(format24To12Display(form.from));
-    }
-  };
-
-  const onToBlur = () => {
-    const parsed = parse12InputTo24(editingTo);
-    if (parsed) setForm((prev) => ({ ...prev, to: parsed }));
-    else setEditingTo(format24To12Display(form.to));
   };
 
   const startEdit = (b) => {
@@ -362,7 +486,13 @@ const Billing = () => {
       phone: b.clientPhone || "",
       address: b.clientAddress || "",
       serviceId: itm ? itm.service?._id || itm.service : "",
-      staff: (b.staff && (b.staff.name || b.staff)) || "",
+      staff:
+        b && b.staff
+          ? typeof b.staff === "object"
+            ? b.staff._id || b.staff.id || ""
+            : // b.staff might be a string (name or id) - try to find matching staff by name, otherwise use as-is
+              staff.find((st) => st.name === b.staff)?._id || b.staff
+          : "",
       amount: itm ? itm.price : b.total,
       discount: itm ? itm.discountPercent || 0 : 0,
       date: b.dateFrom
@@ -379,17 +509,42 @@ const Billing = () => {
 
   return (
     <div>
-      <div className="d-flex justify-content-between align-items-center">
-        <h3>Billing</h3>
+      <div className="d-flex justify-content-between align-items-center mb-3">
+        <h3 className="mb-0">Billing</h3>
         <button className="btn btn-primary" onClick={openModal}>
           + Add Bill
         </button>
       </div>
 
-      <div className="card mt-3 p-3">
+      <div className="card p-3">
         <div className="table-responsive">
           <table className="table table-striped">
             <thead>
+              <tr>
+                <th colSpan={8}>
+                  <TableControls
+                    searchTerm={search}
+                    onSearchChange={(term) => {
+                      setSearch(term);
+                      setCurrentPage(1);
+                    }}
+                    onRefresh={handleRefresh}
+                    onRefreshLoading={isRefreshing}
+                    currentPage={currentPage}
+                    onPageChange={setCurrentPage}
+                    totalPages={Math.ceil(
+                      (bills || []).filter((b) =>
+                        (b.items || []).some((it) => it.itemType === "service")
+                      ).length / itemsPerPage
+                    )}
+                    totalItems={
+                      (bills || []).filter((b) =>
+                        (b.items || []).some((it) => it.itemType === "service")
+                      ).length
+                    }
+                  />
+                </th>
+              </tr>
               <tr>
                 <th>Client Name</th>
                 <th>Item</th>
@@ -402,18 +557,106 @@ const Billing = () => {
               </tr>
             </thead>
             <tbody>
-              {bills.filter((b) =>
-                (b.items || []).some((it) => it.itemType === "service")
-              ).length === 0 && (
-                <tr>
-                  <td colSpan={8}>No bills yet</td>
-                </tr>
-              )}
-              {bills
-                .filter((b) =>
-                  (b.items || []).some((it) => it.itemType === "service")
-                )
-                .map((b) => {
+              {(() => {
+                const getTime = (d) => {
+                  if (!d) return 0;
+                  // Try normal date parse
+                  const t = Date.parse(d);
+                  if (!isNaN(t)) return t;
+                  // If value looks like a Mongo ObjectId (24 hex chars), extract timestamp
+                  try {
+                    const s = String(d);
+                    if (/^[0-9a-fA-F]{24}$/.test(s)) {
+                      const ts = parseInt(s.substring(0, 8), 16) * 1000;
+                      return ts;
+                    }
+                  } catch (e) {
+                    // ignore
+                  }
+                  return 0;
+                };
+                const serviceBills = (bills || [])
+                  .filter((b) =>
+                    (b.items || []).some((it) => it.itemType === "service")
+                  )
+                  .sort((a, b) => {
+                    // sort by createdAt (newest first), fallback to dateFrom or date
+                    const ta = getTime(
+                      a.createdAt || a.dateFrom || a.date || a._id
+                    );
+                    const tb = getTime(
+                      b.createdAt || b.dateFrom || b.date || b._id
+                    );
+                    return tb - ta;
+                  });
+                const q = (search || "").trim().toLowerCase();
+                const filteredBills = q
+                  ? serviceBills.filter((b) => {
+                      const clientStr = String(
+                        b.clientName || b.client || ""
+                      ).toLowerCase();
+                      const phoneStr = String(
+                        b.clientPhone || b.phone || ""
+                      ).toLowerCase();
+                      const it = (b.items || [])[0] || {};
+                      let itemName = "";
+                      if (it) {
+                        if (it.service && (it.service.title || it.service.name))
+                          itemName = it.service.title || it.service.name;
+                        else if (it.membership && it.membership.name)
+                          itemName = it.membership.name;
+                        else if (it.itemType === "service")
+                          itemName =
+                            services.find(
+                              (s) => (s._id || s.id) === (it.service || it._id)
+                            )?.title || "";
+                      }
+                      itemName = String(itemName || "").toLowerCase();
+                      const staffName = (
+                        (b.staff && (b.staff.name || b.staff)) ||
+                        (
+                          staff.find(
+                            (st) => String(st._id || st.id) === String(b.staff)
+                          ) || {}
+                        ).name ||
+                        ""
+                      ).toLowerCase();
+                      const dateStr = b.dateFrom
+                        ? formatDateDisplay(b.dateFrom)
+                        : b.dateFrom
+                        ? formatDateDisplay(b.dateFrom)
+                        : "";
+                      const dateLower = String(dateStr).toLowerCase();
+                      return (
+                        clientStr.includes(q) ||
+                        phoneStr.includes(q) ||
+                        itemName.includes(q) ||
+                        staffName.includes(q) ||
+                        dateLower.includes(q)
+                      );
+                    })
+                  : serviceBills;
+
+                // Pagination logic
+                const start = (currentPage - 1) * itemsPerPage;
+                const paginatedBills = filteredBills.slice(
+                  start,
+                  start + itemsPerPage
+                );
+
+                if (paginatedBills.length === 0) {
+                  return (
+                    <tr>
+                      <td colSpan={8} className="text-center">
+                        {filteredBills.length === 0
+                          ? "No bills yet"
+                          : "No results on this page"}
+                      </td>
+                    </tr>
+                  );
+                }
+
+                return paginatedBills.map((b) => {
                   const item = b.items && b.items[0];
                   let itemName = "";
                   if (item) {
@@ -430,11 +673,19 @@ const Billing = () => {
                           (s) => (s._id || s.id) === (item.service || item._id)
                         )?.title || "";
                   }
-                  const staffName = b.staff && (b.staff.name || b.staff);
-                  const dateStr = b.date
-                    ? formatDateDisplay(b.date)
-                    : b.dateFrom
+                  const staffName =
+                    (b.staff && (b.staff.name || b.staff)) ||
+                    (
+                      staff.find(
+                        (st) => String(st._id || st.id) === String(b.staff)
+                      ) || {}
+                    ).name ||
+                    "";
+                  // Prefer the bill's scheduled date (`dateFrom`) over the document's creation `date`.
+                  const dateStr = b.dateFrom
                     ? formatDateDisplay(b.dateFrom)
+                    : b.date
+                    ? formatDateDisplay(b.date)
                     : "";
                   return (
                     <tr key={b._id || b.id}>
@@ -448,16 +699,20 @@ const Billing = () => {
                       <td>
                         <button
                           className="btn btn-sm btn-outline-primary me-1"
-                          onClick={() => generatePDFBill(b)}
+                          onClick={() => {
+                            const enriched = enrichBillForPDF(b);
+                            generatePDFBill(enriched);
+                          }}
                           title="Open PDF"
                         >
                           📄
                         </button>
                         <button
                           className="btn btn-sm btn-outline-success me-1"
-                          onClick={() =>
-                            generatePDFBill(b, { action: "print" })
-                          }
+                          onClick={() => {
+                            const enriched = enrichBillForPDF(b);
+                            generatePDFBill(enriched, { action: "print" });
+                          }}
                           title="Print PDF"
                         >
                           🖨️
@@ -477,7 +732,8 @@ const Billing = () => {
                       </td>
                     </tr>
                   );
-                })}
+                });
+              })()}
             </tbody>
           </table>
         </div>
@@ -490,9 +746,12 @@ const Billing = () => {
               <div className="modal-dialog modal-xl modal-dialog-centered">
                 <form
                   onSubmit={submit}
-                  className="modal-content p-3 shadow-sm rounded"
+                  className="modal-content shadow-sm rounded"
                 >
-                  <div className="modal-header border-0">
+                  <div
+                    className="modal-header border-0"
+                    style={{ backgroundColor: "#f2f2f2" }}
+                  >
                     <div>
                       <h5 className="modal-title mb-0">Add Bill</h5>
                       <small className="text-muted">
@@ -533,6 +792,7 @@ const Billing = () => {
                             onChange={(e) =>
                               setForm({ ...form, phone: e.target.value })
                             }
+                            required
                           />
                         </div>
                         <div className="col-md-4">
@@ -544,6 +804,7 @@ const Billing = () => {
                             onChange={(e) =>
                               setForm({ ...form, address: e.target.value })
                             }
+                            required
                           />
                         </div>
                       </div>
@@ -561,7 +822,8 @@ const Billing = () => {
                             <option value="">Select service</option>
                             {services.map((s) => (
                               <option key={s._id || s.id} value={s._id || s.id}>
-                                {s.title || s.name} — ₹{s.price}
+                                {s.title || s.name} — ₹
+                                {formatNoDecimal(s.price)}
                               </option>
                             ))}
                           </select>
@@ -574,10 +836,11 @@ const Billing = () => {
                             onChange={(e) =>
                               setForm({ ...form, staff: e.target.value })
                             }
+                            required
                           >
                             <option value="">Select staff</option>
                             {staff.map((s) => (
-                              <option key={s._id || s.id} value={s.name}>
+                              <option key={s._id || s.id} value={s._id || s.id}>
                                 {s.name} — {s.role}
                               </option>
                             ))}
@@ -593,6 +856,7 @@ const Billing = () => {
                             onChange={(e) =>
                               setForm({ ...form, amount: e.target.value })
                             }
+                            required
                           />
                         </div>
                       </div>
@@ -611,24 +875,48 @@ const Billing = () => {
                           />
                         </div>
                         <div className="col-md-3">
-                          <label className="form-label">From</label>
+                          <label className="form-label">
+                            From --- {format24To12Display(form.from)}
+                          </label>
                           <input
                             className="form-control"
-                            placeholder="e.g. 2:30 PM"
-                            value={editingFrom}
-                            onChange={(e) => setEditingFrom(e.target.value)}
-                            onBlur={onFromBlur}
+                            type="time"
+                            value={form.from}
+                            onChange={(e) => {
+                              const newFrom = e.target.value;
+                              // lookup selected service to compute duration
+                              const svc = services.find(
+                                (s) =>
+                                  String(s._id || s.id) ===
+                                  String(form.serviceId)
+                              );
+                              const dur = svc ? parseServiceDuration(svc) : 0;
+                              setForm((prev) => ({
+                                ...prev,
+                                from: newFrom,
+                                to: addMinutesToTime(newFrom, dur || 0),
+                              }));
+                            }}
                           />
+                          {/* <div className="form-text">
+                            {format24To12Display(form.from)}
+                          </div> */}
                         </div>
                         <div className="col-md-3">
-                          <label className="form-label">To</label>
+                          <label className="form-label">
+                            To ---{format24To12Display(form.to)}
+                          </label>
                           <input
                             className="form-control"
-                            placeholder="e.g. 3:00 PM"
-                            value={editingTo}
-                            onChange={(e) => setEditingTo(e.target.value)}
-                            onBlur={onToBlur}
+                            type="time"
+                            value={form.to}
+                            onChange={(e) =>
+                              setForm({ ...form, to: e.target.value })
+                            }
                           />
+                          {/* <div className="form-text">
+                            {format24To12Display(form.to)}
+                          </div> */}
                         </div>
                         {/* membership usage selector (if client has active membership purchases) */}
                         {(() => {
@@ -718,14 +1006,17 @@ const Billing = () => {
                             <input
                               className="form-control form-control-lg text-end"
                               readOnly
-                              value={computeNetAmount()}
+                              value={formatNoDecimal(computeNetAmount())}
                             />
                           </div>
                         </div>
                       </div>
                     </div>
                   </div>
-                  <div className="modal-footer border-0">
+                  <div
+                    className="modal-footer border-0"
+                    style={{ backgroundColor: "#f2f2f2" }}
+                  >
                     <button
                       type="button"
                       className="btn btn-outline-secondary"
@@ -762,7 +1053,10 @@ const Billing = () => {
             <div className="modal d-block" tabIndex={-1}>
               <div className="modal-dialog modal-sm modal-dialog-centered">
                 <div className="modal-content p-3 shadow-sm rounded">
-                  <div className="modal-header">
+                  <div
+                    className="modal-header"
+                    style={{ backgroundColor: "#f2f2f2" }}
+                  >
                     <h5 className="modal-title">Create Bill</h5>
                     <button
                       type="button"
@@ -807,7 +1101,10 @@ const Billing = () => {
             <div className="modal d-block" tabIndex={-1}>
               <div className="modal-dialog modal-lg modal-dialog-centered">
                 <div className="modal-content p-3 shadow-sm rounded">
-                  <div className="modal-header">
+                  <div
+                    className="modal-header"
+                    style={{ backgroundColor: "#f2f2f2" }}
+                  >
                     <h5 className="modal-title">Purchase Membership</h5>
                     <button
                       type="button"
@@ -862,7 +1159,7 @@ const Billing = () => {
                                     .map((d, i) => <li key={i}>{d}</li>)}
                               </ul>
                               <div className="d-flex justify-content-between align-items-center">
-                                <strong>₹{m.price}</strong>
+                                <strong>₹{formatNoDecimal(m.price)}</strong>
                                 <button
                                   className="btn btn-primary btn-sm"
                                   onClick={async () => {
@@ -888,8 +1185,10 @@ const Billing = () => {
                                       const result = await dispatch(
                                         createBill(payload)
                                       ).unwrap();
-                                      // auto-generate PDF and close
-                                      generatePDFBill(result);
+                                      // auto-generate PDF (enriched) and refresh table
+                                      const enriched = enrichBillForPDF(result);
+                                      generatePDFBill(enriched);
+                                      dispatch(fetchBills());
                                       setShowMembershipModal(false);
                                       setShowModal(false);
                                       document.body.classList.remove(
@@ -909,7 +1208,10 @@ const Billing = () => {
                       ))}
                     </div>
                   </div>
-                  <div className="modal-footer">
+                  <div
+                    className="modal-footer"
+                    style={{ backgroundColor: "#f2f2f2" }}
+                  >
                     <button
                       className="btn btn-outline-secondary"
                       onClick={closeAllModals}

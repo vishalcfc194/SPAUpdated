@@ -29,6 +29,9 @@ const Sidebar = ({ open = true }) => {
         <NavLink className="nav-link" to="/memberships">
           Memberships
         </NavLink>
+        <NavLink className="nav-link" to="/membership-plans">
+          Membership Plans
+        </NavLink>
         <NavLink className="nav-link" to="/staff">
           Staff
         </NavLink>
