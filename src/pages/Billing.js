@@ -123,6 +123,7 @@ function format24To12Display(hhmm) {
 // Format amount to show no decimals but always ".00" suffix
 function formatNoDecimal(n) {
   const num = Number(n) || 0;
+  // show rounded integer with .00 suffix (no fractional paise shown)
   return `${Math.round(num)}.00`;
 }
 
@@ -507,6 +508,43 @@ const Billing = () => {
     document.body.classList.add("modal-open-blur");
   };
 
+  // Robust delete handler: prefer SweetAlert2 (if installed) else fallback to window.confirm
+  const handleDelete = async (b) => {
+    try {
+      // try dynamic import of sweetalert2 (avoids hard dependency)
+      let useSwal = null;
+      try {
+        const mod = await import("sweetalert2");
+        useSwal = mod.default || mod;
+      } catch (e) {
+        useSwal = null;
+      }
+
+      if (useSwal) {
+        const resp = await useSwal.fire({
+          title: "Delete bill",
+          text: "Are you sure you want to delete this bill?",
+          icon: "warning",
+          showCancelButton: true,
+          confirmButtonText: "Yes, delete it",
+          cancelButtonText: "Cancel",
+        });
+        if (!resp.isConfirmed) return;
+      } else {
+        const ok = window.confirm("Are you sure you want to delete this bill?");
+        if (!ok) return;
+      }
+
+      await dispatch(deleteBill(b._id || b.id)).unwrap();
+      toast.success("Bill deleted");
+      // refresh list
+      dispatch(fetchBills());
+    } catch (err) {
+      console.error("delete bill error", err);
+      toast.error("Failed to delete bill");
+    }
+  };
+
   return (
     <div>
       <div className="d-flex justify-content-between align-items-center mb-3">
@@ -521,7 +559,7 @@ const Billing = () => {
           <table className="table table-striped">
             <thead>
               <tr>
-                <th colSpan={8}>
+                <th colSpan={9}>
                   <TableControls
                     searchTerm={search}
                     onSearchChange={(term) => {
@@ -550,6 +588,7 @@ const Billing = () => {
                 <th>Item</th>
                 <th>Staff</th>
                 <th>Amount</th>
+                <th>Discount</th>
                 <th>Date</th>
                 <th>From</th>
                 <th>To</th>
@@ -687,16 +726,27 @@ const Billing = () => {
                     : b.date
                     ? formatDateDisplay(b.date)
                     : "";
-                  return (
-                    <tr key={b._id || b.id}>
-                      <td>{b.clientName || b.client}</td>
-                      <td>{itemName}</td>
-                      <td>{staffName}</td>
-                      <td>₹{b.total}</td>
-                      <td>{dateStr}</td>
-                      <td>{b.timeFrom || b.from}</td>
-                      <td>{b.timeTo || b.to}</td>
-                      <td>
+                      return (
+                        <tr key={b._id || b.id}>
+                          <td>{b.clientName || b.client}</td>
+                          <td>{itemName}</td>
+                          <td>{staffName}</td>
+                          <td>₹{formatNoDecimal(b.total)}</td>
+                          <td>
+                            {(() => {
+                              const it = (b.items && b.items[0]) || null;
+                              const price = Number(it?.price ?? b.amount ?? b.total ?? 0) || 0;
+                              const pct = Number(
+                                b.discountPercent ?? b.discount ?? (it && it.discountPercent) ?? 0
+                              );
+                              const discAmt = Math.round((price * pct) / 100) || 0;
+                              return pct > 0 ? `₹${formatNoDecimal(discAmt)} (${pct}%)` : "-";
+                            })()}
+                          </td>
+                          <td>{dateStr}</td>
+                          <td>{b.timeFrom || b.from}</td>
+                          <td>{b.timeTo || b.to}</td>
+                          <td>
                         <button
                           className="btn btn-sm btn-outline-primary me-1"
                           onClick={() => {
@@ -725,7 +775,7 @@ const Billing = () => {
                         </button>
                         <button
                           className="btn btn-sm btn-outline-danger"
-                          onClick={() => dispatch(deleteBill(b._id || b.id))}
+                          onClick={() => handleDelete(b)}
                         >
                           Delete
                         </button>
@@ -753,9 +803,13 @@ const Billing = () => {
                     style={{ backgroundColor: "#f2f2f2" }}
                   >
                     <div>
-                      <h5 className="modal-title mb-0">Add Bill</h5>
+                      <h5 className="modal-title mb-0">
+                        {editingBill ? "Update Bill" : "Add Bill"}
+                      </h5>
                       <small className="text-muted">
-                        Create a new service invoice
+                        {editingBill
+                          ? "Update a service invoice"
+                          : "Create a new service invoice"}
                       </small>
                     </div>
                     <button
@@ -1033,11 +1087,13 @@ const Billing = () => {
                       disabled={!isFormValid()}
                       title={
                         isFormValid()
-                          ? "Generate bill"
+                          ? editingBill
+                            ? "Update bill"
+                            : "Generate bill"
                           : "Fill all fields to enable"
                       }
                     >
-                      Generate Bill
+                      {editingBill ? "Update Bill" : "Generate Bill"}
                     </button>
                   </div>
                 </form>

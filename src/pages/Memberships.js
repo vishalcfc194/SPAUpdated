@@ -534,7 +534,7 @@ const Memberships = () => {
               <thead>
                 <tr>
                   <th>Service Name</th>
-                  <th>Used Count</th>
+                  <th>Client</th>
                   <th>Last Used</th>
                 </tr>
               </thead>
@@ -547,28 +547,20 @@ const Memberships = () => {
                   </tr>
                 ) : (
                   (() => {
-                    const servicesSummary = {};
-                    services.forEach((s) => {
-                      const name = s.serviceName || "Unknown";
-                      if (!servicesSummary[name])
-                        servicesSummary[name] = { count: 0, lastDate: null };
-                      servicesSummary[name].count++;
-                      const sDate = s.date || s.createdAt;
-                      const sTs = sDate ? Date.parse(sDate) : 0;
-                      const lastTs = servicesSummary[name].lastDate
-                        ? Date.parse(servicesSummary[name].lastDate)
-                        : 0;
-                      if (sTs > lastTs) servicesSummary[name].lastDate = sDate;
+                    // Show up to 3 most recent service logs
+                    const sorted = [...services].sort((a, b) => {
+                      const aTs = Date.parse(a.date || a.createdAt || 0) || 0;
+                      const bTs = Date.parse(b.date || b.createdAt || 0) || 0;
+                      return bTs - aTs;
                     });
-                    return Object.entries(servicesSummary).map(
-                      ([name, data]) => (
-                        <tr key={name}>
-                          <td>{name}</td>
-                          <td>{data.count}</td>
-                          <td>{formatDateLong(data.lastDate)}</td>
-                        </tr>
-                      )
-                    );
+                    const top = sorted.slice(0, 3);
+                    return top.map((s) => (
+                      <tr key={s._id || s.id || `${s.serviceName}-${s.date}`}>
+                        <td>{s.serviceName || "Unknown"}</td>
+                        <td>{s.client?.name || s.clientName || "-"}</td>
+                        <td>{formatDateLong(s.date || s.createdAt)}</td>
+                      </tr>
+                    ));
                   })()
                 )}
               </tbody>
@@ -1377,10 +1369,14 @@ const Memberships = () => {
                                           clientRecord?._id || clientRecord?.id;
 
                                         if (!clientId) {
-                                          alert(
-                                            "Unable to find client. Please refresh the page and try again."
+                                          console.warn(
+                                            "Client ID not found in local state, letting backend resolve via bill...",
+                                            {
+                                              manageServices,
+                                              clientName:
+                                                manageServices.clientName,
+                                            }
                                           );
-                                          return;
                                         }
 
                                         const result = await dispatch(
@@ -1418,10 +1414,16 @@ const Memberships = () => {
                                         setShowServiceForm(false);
                                         setSelectedServiceId(null);
                                       } catch (err) {
+                                        const errorMsg =
+                                          err?.response?.data?.error ||
+                                          err?.message ||
+                                          "Failed to log service usage";
                                         console.error(
-                                          "Error logging service",
+                                          "Error logging service:",
+                                          errorMsg,
                                           err
                                         );
+                                        alert(`Error: ${errorMsg}`);
                                       }
                                     }}
                                   >

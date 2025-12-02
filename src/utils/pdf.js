@@ -39,12 +39,20 @@ export const generatePDFBill = async (bill, options = { action: "open" }) => {
       const qtyRaw = it.quantity ?? it.sessions ?? it.count ?? 1;
       const qty = Number(qtyRaw) || 1;
       const price = Number(it.price ?? it.amount ?? it.rate ?? 0) || 0;
-      const amount = Math.round(qty * price * 100) / 100;
-      return { name, qty, price, amount };
+      const amountNum = Math.round(qty * price);
+      return { name, qty, price: `${Math.round(price)}.00`, amount: `${Math.round(amountNum)}.00` };
     });
 
-    const subtotal =
-      items.reduce((s, i) => s + (i.amount || 0), 0) || Number(bill.total || 0);
+    // Use integer-rounding for display (no fractional paise). Compute numeric subtotal for discount math.
+    const subtotalNum = items.reduce((s, i) => s + Number(String(i.amount).replace(/[^0-9]/g, "")), 0) || Math.round(Number(bill.total || 0));
+    const subtotal = `${Math.round(subtotalNum)}.00`;
+
+    // Determine discount percent (prefer bill.discountPercent or bill.discount, else item-level)
+    const discountPercent = Number((bill.discountPercent ?? bill.discount ?? (bill.items && bill.items[0] && bill.items[0].discountPercent)) || 0);
+    const discountAmountNum = Math.round((subtotalNum * (discountPercent / 100)) || 0);
+    const discountAmount = `${Math.round(discountAmountNum)}.00`;
+    const totalNum = Math.round(Number(bill.total ?? subtotalNum - discountAmountNum));
+    const total = `${Math.round(totalNum)}.00`;
 
     // Richer HTML for full A4 page
     const invoiceHtml = `
@@ -112,12 +120,8 @@ export const generatePDFBill = async (bill, options = { action: "open" }) => {
         <div style="display:flex; justify-content:flex-end; margin-top:18px;">
           <div style="width:320px;">
             <div style="display:flex; justify-content:space-between; padding:6px 0; font-size:13px;"><div>Subtotal</div><div>₹${subtotal}</div></div>
-            <div style="display:flex; justify-content:space-between; padding:6px 0; font-size:13px;"><div>Discount</div><div>₹${
-              bill.discount || 0
-            }</div></div>
-            <div style="display:flex; justify-content:space-between; padding:8px 0; font-weight:700; font-size:16px; border-top:1px solid #ddd; margin-top:6px;"><div>Total</div><div>₹${
-              bill.total || subtotal
-            }</div></div>
+            <div style="display:flex; justify-content:space-between; padding:6px 0; font-size:13px;"><div>Discount (${discountPercent}%)</div><div>₹${discountAmount}</div></div>
+            <div style="display:flex; justify-content:space-between; padding:8px 0; font-weight:700; font-size:16px; border-top:1px solid #ddd; margin-top:6px;"><div>Total</div><div>₹${total}</div></div>
           </div>
         </div>
 
